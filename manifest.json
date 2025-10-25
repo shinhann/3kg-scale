@@ -1,0 +1,21 @@
+{
+  "name": "互動秤面學習板",
+  "short_name": "秤面",
+  "description": "一個學習如何使用和判讀秤面的互動 Web App",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#3b82f6",
+  "icons": [
+    {
+      "src": "https://placehold.co/192x192/3b82f6/ffffff?text=Scale",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "https://placehold.co/512x512/3b82f6/ffffff?text=Scale",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ]
+}
