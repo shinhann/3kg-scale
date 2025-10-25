@@ -1,0 +1,1019 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>互動秤面學習板</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        /* .dial-mark { transform-origin: center; } <-- 已移除此行 */
+        .line-segment { stroke-linecap: round; }
+        .needle { /* transform-origin: center; 已移除此行 */ /* transition: transform 0.5s ease-in-out; <-- 移除CSS動畫，改用JS控制 */ }
+        .confetti-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            overflow: hidden;
+            z-index: 1000;
+        }
+        .confetti {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background-color: #f0f;
+            animation: fall linear forwards;
+            opacity: 0;
+        }
+        @keyframes fall {
+            0% { transform: translateY(-100px) rotateZ(0deg); opacity: 1; }
+            100% { transform: translateY(100vh) rotateZ(720deg); opacity: 0; }
+        }
+
+        /* --- 砝碼和拖曳樣式 --- */
+        #weights-home {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            padding: 10px;
+            background-color: #f3f4f6;
+            border-radius: 8px;
+            justify-content: center;
+        }
+        #on-scale-area {
+            position: absolute;
+            top: 5%; /* 位於秤面上方外部 */
+            left: 50%;
+            transform: translateX(-50%);
+            width: 200px;
+            min-height: 80px;
+            background-color: rgba(255, 255, 255, 0.7);
+            border: 2px dashed #9ca3af;
+            border-radius: 8px;
+            display: flex;
+            flex-wrap: wrap;
+            align-content: flex-start;
+            gap: 5px;
+            padding: 5px;
+            z-index: 10;
+            overflow-y: auto; /* 如果砝碼太多可以滾動 */
+        }
+        .draggable-weight {
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 0.9rem;
+            cursor: grab;
+            user-select: none;
+            border: 2px solid rgba(0,0,0,0.2);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            /* 用於自製砝碼圖片 */
+            background-size: cover;
+            background-position: center;
+            /* 讓文字有描邊，在深色圖片上也能看見 */
+            text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+        }
+        .dragging {
+            opacity: 0.5;
+            cursor: grabbing;
+        }
+        .on-scale {
+            width: 30px; /* 放在秤盤上的砝碼縮小一點 */
+            height: 30px;
+            font-size: 0.75rem;
+        }
+        
+        /* 挑戰模式中隱藏砝碼區 */
+        .challenge-mode-active #weights-container,
+        .challenge-mode-active #on-scale-area {
+            display: none;
+        }
+        
+        /* 挑戰模式中隱藏數字顯示 */
+        .challenge-mode-active #digital-display-container {
+            display: none;
+        }
+        
+        /* 挑戰模式中顯示輸入區 */
+        #challenge-inputs {
+            display: none;
+        }
+        .challenge-mode-active #challenge-inputs {
+            display: block;
+        }
+        
+        /* 挑戰模式中隱藏軌跡開關 */
+        .challenge-mode-active #track-switch-container {
+            display: none;
+        }
+        
+        /* 自製砝碼彈窗樣式 (已重新命名) */
+        .app-modal-hidden {
+            display: none;
+        }
+
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-900 min-h-screen flex items-center justify-center p-4">
+
+    <div id="app-container" class="flex flex-col lg:flex-row bg-white shadow-xl rounded-lg overflow-hidden max-w-6xl w-full">
+
+        <!-- 左側：秤面區域 -->
+        <div class="relative w-full lg:w-3/5 p-4 flex items-center justify-center bg-gray-50">
+            <div class="relative w-full max-w-md aspect-square bg-gray-200 rounded-full shadow-inner flex items-center justify-center" style="transform: scale(0.7);">
+                <!-- 秤面 SVG -->
+                <svg id="scaleDial" class="w-full h-full" viewBox="0 0 200 215">
+                    <!-- 新增：秤的底座（最底層） -->
+                    <rect x="70" y="195" width="60" height="5" fill="#9ca3af"/>
+                    <polygon points="70,200 130,200 140,215 60,215" fill="#a1a1aa"/>
+                    
+                    <!-- 圓形錶盤 -->
+                    <circle cx="100" cy="100" r="95" fill="white" stroke="#ccc" stroke-width="2"/>
+
+                    <!-- 刻度 -->
+                    <g id="dialMarks">
+                        <!-- 動態生成刻度 -->
+                    </g>
+
+                    <!-- 重量標示 -->
+                    <text x="100" y="30" text-anchor="middle" font-size="12" fill="#333" transform="rotate(0 100 100)">
+                        <tspan x="100">0</tspan>
+                        <tspan x="100" dy="1.2em">3kg</tspan>
+                        <tspan x="103" dy="1.5em" font-size="7">最大計量 3kg</tspan>
+                        <tspan x="100" dy="1.2em" font-size="7">最小刻度 10g</tspan>
+                    </text>
+                    <text x="100" y="45" text-anchor="middle" dominant-baseline="middle" font-size="12" fill="#333" transform="rotate(120 100 100)">1kg</text>
+                    <text x="100" y="45" text-anchor="middle" dominant-baseline="middle" font-size="12" fill="#333" transform="rotate(240 100 100)">2kg</text>
+
+                    <!-- 新增 500g 標示 -->
+                    <text x="100" y="45" text-anchor="middle" dominant-baseline="middle" font-size="10" fill="#333" transform="rotate(60 100 100)">500g</text>
+                    <text x="100" y="45" text-anchor="middle" dominant-baseline="middle" font-size="10" fill="#333" transform="rotate(180 100 100)">1kg500g</text>
+                    <text x="100" y="45" text-anchor="middle" dominant-baseline="middle" font-size="10" fill="#333" transform="rotate(300 100 100)">2kg500g</text>
+
+                    <!-- 軌跡 (扇形) -->
+                    <path id="weightTrack" d="" fill="rgba(239, 68, 68, 0.3)" stroke-width="0"/>
+                    
+                    <!-- 指針 -->
+                    <g id="needleGroup" class="cursor-grab active:cursor-grabbing">
+                        <line x1="100" y1="100" x2="100" y2="10" stroke="red" stroke-width="1.5" class="line-segment needle" id="weightNeedle" transform="rotate(0 100 100)"/>
+                        <circle cx="100" cy="100" r="5" fill="red" stroke="white" stroke-width="1"/>
+                    </g>
+                </svg>
+
+                <!-- 秤盤 (Drop Zone) 已移到外部 -->
+            </div>
+
+            <!-- 秤盤 (Drop Zone) - 新位置 -->
+            <div id="on-scale-area" title="將砝碼拖到這裡"></div>
+        </div>
+
+        <!-- 右側：控制面板 -->
+        <div class="w-full lg:w-2/5 p-6 bg-white flex flex-col justify-between">
+            <div>
+                <h1 class="text-3xl font-bold mb-4 text-center lg:text-left">3公斤秤面學習板</h1>
+
+                <!-- 數字顯示 (已加上 ID) -->
+                <div id="digital-display-container" class="mb-6 bg-blue-100 p-4 rounded-lg flex items-center justify-center flex-wrap gap-x-4">
+                    <span id="digitalKgDisplay" class="text-5xl font-extrabold text-blue-800 tracking-tight">0 公斤</span>
+                    <span id="digitalGramDisplay" class="text-4xl font-bold text-blue-600 tracking-tight">0 公克</span>
+                </div>
+
+                <!-- 挑戰模式題目 (補回) -->
+                <div id="challenge-question-reading" class="mb-4 text-center text-lg font-semibold text-gray-700 hidden">
+                    請讀出秤面上的重量：
+                </div>
+                
+                <!-- 挑戰模式輸入 (補回) -->
+                <div id="challenge-inputs" class="mb-4">
+                    <div class="flex gap-4">
+                        <input type="number" id="challengeKgInput" placeholder="公斤" class="w-1/2 p-2 border rounded-lg text-lg text-center">
+                        <input type="number" id="challengeGInput" placeholder="公克" class="w-1/2 p-2 border rounded-lg text-lg text-center">
+                    </div>
+                </div>
+
+                <!-- 砝碼區塊 (新增ID) -->
+                <div id="weights-container" class="mb-4">
+                    <h2 class="text-lg font-semibold text-gray-700 mb-2 text-center">砝碼區（可無限拖曳）</h2>
+                    <div id="weights-home">
+                        <div class="draggable-weight" data-weight="500" style="background-color: #ef4444;" title="500g">500g</div>
+                        <div class="draggable-weight" data-weight="100" style="background-color: #f97316;" title="100g">100g</div>
+                        <div class="draggable-weight" data-weight="50" style="background-color: #eab308;" title="50g">50g</div>
+                        <div class="draggable-weight" data-weight="10" style="background-color: #22c55e;" title="10g">10g</div>
+                        <!-- <div class="draggable-weight" data-weight="1" style="background-color: #3b82f6;" title="1g">1g</div> --> <!-- 1g 砝碼已移除 -->
+                    </div>
+                    <!-- 新增：自製砝碼按鈕 -->
+                    <button id="addWeightBtn" class="w-full mt-2 bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md transition duration-200">+ 自製砝碼</button>
+                </div>
+
+                <!-- 按鈕 -->
+                <button id="challengeBtn" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-4 rounded-lg shadow-lg transition duration-200 text-lg mb-4">🏆 開始挑戰 (讀重量)</button>
+                <button id="submitAnswerBtn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 px-4 rounded-lg shadow-lg transition duration-200 text-lg hidden">提交答案</button>
+
+                <!-- 回饋訊息 -->
+                <div id="feedbackMessage" class="mt-4 text-center text-2xl font-bold hidden"></div>
+
+                <!-- 選項開關 -->
+                <div class="mt-6 border-t border-gray-200 pt-6">
+                    <!-- 軌跡開關 -->
+                    <div id="track-switch-container" class="flex items-center justify-between mb-4">
+                        <span class="text-lg text-gray-700">軌跡</span>
+                        <label class="inline-flex relative items-center cursor-pointer">
+                            <input type="checkbox" id="trackToggle" class="sr-only peer">
+                            <div class="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                        </label>
+                    </div>
+                    <div class="flex items-center justify-between mb-4">
+                        <span class="text-lg text-gray-700">音效</span>
+                        <label class="inline-flex relative items-center cursor-pointer">
+                            <input type="checkbox" id="soundToggle" class="sr-only peer" checked>
+                            <div class="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                        </label>
+                    </div>
+                    <!-- 重置按鈕 -->
+                    <div class="flex items-center justify-between mb-4">
+                        <span class="text-lg text-gray-700">重置秤面</span>
+                        <button id="resetBtn" class="bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md transition duration-200">全部清除</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 幫助按鈕 -->
+            <div class="mt-8 text-center text-gray-500 text-sm">
+                <button id="helpBtn" class="text-blue-500 hover:text-blue-600 focus:outline-none flex items-center justify-center mx-auto">
+                    <svg class="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    <span>幫助</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 結果彈窗 -->
+    <div id="resultModal" class="fixed inset-0 bg-gray-800 bg-opacity-75 items-center justify-center z-50 app-modal-hidden">
+        <div class="bg-white p-8 rounded-lg shadow-xl text-center max-w-sm w-full">
+            <h2 class="text-3xl font-bold mb-4" id="resultTitle">挑戰完成！</h2>
+            <p class="text-xl mb-6">您的分數：<span id="finalScore" class="font-extrabold text-blue-600"></span> / <span id="totalQuestions" class="font-extrabold text-gray-700"></span></p>
+            <button id="closeResultModalBtn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg">再玩一次</button>
+        </div>
+    </div>
+
+    <!-- 幫助彈窗 -->
+    <div id="helpModal" class="fixed inset-0 bg-gray-800 bg-opacity-75 items-center justify-center z-50 app-modal-hidden">
+        <div class="bg-white p-8 rounded-lg shadow-xl max-w-md w-full">
+            <h2 class="text-2xl font-bold mb-4">如何使用？</h2>
+            <ul class="list-disc list-inside text-gray-700 space-y-2">
+                <li><strong class="text-blue-600">自由模式：</strong>從右側「砝碼區」拖曳砝碼到左上角的「秤盤」上，秤面會顯示總重量。</li>
+                <li><strong class="text-blue-600">自製砝碼：</strong>點擊「+ 自製砝碼」，上傳圖片並設定重量，即可建立新的可拖曳物品。</li>
+                <li><strong class="text-green-600">挑戰模式：</strong>點擊「🏆 開始挑戰」，指針會自動轉到一個重量，請在輸入框中填入您判讀的公斤和公克數。</li>
+                <li><strong class="text-red-600">重置按鈕：</strong>點擊「全部清除」來清空秤盤和重量。</li>
+                <li><strong class="text-gray-600">軌跡開關：</strong>打開可顯示重量的扇形面積。</li>
+                <li><strong class="text-gray-600">音效開關：</strong>控制是否播放音效。</li>
+            </ul>
+            <button id="closeHelpModalBtn" class="mt-6 bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg w-full">我知道了</button>
+        </div>
+    </div>
+
+    <!-- 新增：自製砝碼彈窗 -->
+    <div id="customWeightModal" class="fixed inset-0 bg-gray-800 bg-opacity-75 items-center justify-center z-50 app-modal-hidden">
+        <div class="bg-white p-8 rounded-lg shadow-xl max-w-md w-full">
+            <h2 class="text-2xl font-bold mb-4">建立自製砝碼</h2>
+            
+            <div class="mb-4">
+                <label class="block text-gray-700 text-sm font-bold mb-2" for="customWeightName">
+                    物品名稱 (例如：書本)
+                </label>
+                <input id="customWeightName" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" type="text" placeholder="書本">
+            </div>
+
+            <div class="mb-4">
+                <label class="block text-gray-700 text-sm font-bold mb-2" for="customWeightGrams">
+                    重量 (公克)
+                </label>
+                <input id="customWeightGrams" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" type="number" placeholder="800">
+            </div>
+
+            <div class="mb-4">
+                <label class="block text-gray-700 text-sm font-bold mb-2" for="customWeightImage">
+                    上傳圖片
+                </label>
+                <input id="customWeightImageInput" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" type="file" accept="image/*">
+            </div>
+
+            <div class="mb-6 text-center">
+                <label class="block text-gray-700 text-sm font-bold mb-2">
+                    圖片預覽
+                </label>
+                <div id="imagePreview" class="w-32 h-32 bg-gray-200 rounded-full mx-auto border border-gray-300" style="background-size: cover; background-position: center;"></div>
+            </div>
+
+            <div class="flex items-center justify-between">
+                <button id="saveWeightBtn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline" type="button">
+                    儲存砝碼
+                </button>
+                <button id="closeModalBtn" class="bg-gray-500 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline" type="button">
+                    取消
+                </button>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- 彩花容器 -->
+    <div class="confetti-container" id="confettiContainer"></div>
+
+    <script>
+    // -----------------------------------------------------------------
+    // --- 修正：將所有 JS 程式碼包裹在 DOMContentLoaded 中 ---
+    // -----------------------------------------------------------------
+    document.addEventListener('DOMContentLoaded', () => {
+
+        // --- 變數宣告 ---
+        let scaleDial, needleGroup, weightNeedle, digitalKgDisplay, digitalGramDisplay,
+            challengeBtn, submitAnswerBtn, feedbackMessage, soundToggle, helpBtn,
+            helpModal, closeHelpModalBtn, resultModal, resultTitle, finalScore,
+            totalQuestions, closeResultModalBtn, confettiContainer, resetBtn,
+            appContainer, weightsHome, onScaleArea, challengeQuestionReading,
+            challengeKgInput, challengeGInput, trackToggle, weightTrack;
+            
+        // 自製砝碼相關
+        let addWeightBtn, customWeightModal, closeModalBtn, saveWeightBtn,
+            customWeightName, customWeightGrams, customWeightImageInput, imagePreview;
+
+        // --- 變數賦值 ---
+        scaleDial = document.getElementById('scaleDial');
+        needleGroup = document.getElementById('needleGroup');
+        weightNeedle = document.getElementById('weightNeedle');
+        digitalKgDisplay = document.getElementById('digitalKgDisplay');
+        digitalGramDisplay = document.getElementById('digitalGramDisplay');
+        challengeBtn = document.getElementById('challengeBtn');
+        submitAnswerBtn = document.getElementById('submitAnswerBtn');
+        feedbackMessage = document.getElementById('feedbackMessage');
+        soundToggle = document.getElementById('soundToggle');
+        helpBtn = document.getElementById('helpBtn');
+        helpModal = document.getElementById('helpModal');
+        closeHelpModalBtn = document.getElementById('closeHelpModalBtn');
+        resultModal = document.getElementById('resultModal');
+        resultTitle = document.getElementById('resultTitle');
+        finalScore = document.getElementById('finalScore');
+        totalQuestions = document.getElementById('totalQuestions');
+        closeResultModalBtn = document.getElementById('closeResultModalBtn');
+        confettiContainer = document.getElementById('confettiContainer');
+        resetBtn = document.getElementById('resetBtn');
+        appContainer = document.getElementById('app-container');
+        
+        // 拖曳相關
+        weightsHome = document.getElementById('weights-home');
+        onScaleArea = document.getElementById('on-scale-area');
+        
+        // 挑戰模式 (讀取) 相關
+        challengeQuestionReading = document.getElementById('challenge-question-reading');
+        challengeKgInput = document.getElementById('challengeKgInput');
+        challengeGInput = document.getElementById('challengeGInput');
+        
+        // 軌跡相關
+        trackToggle = document.getElementById('trackToggle');
+        weightTrack = document.getElementById('weightTrack');
+        
+        // 自製砝碼相關
+        addWeightBtn = document.getElementById('addWeightBtn');
+        customWeightModal = document.getElementById('customWeightModal');
+        closeModalBtn = document.getElementById('closeModalBtn');
+        saveWeightBtn = document.getElementById('saveWeightBtn');
+        customWeightName = document.getElementById('customWeightName');
+        customWeightGrams = document.getElementById('customWeightGrams');
+        customWeightImageInput = document.getElementById('customWeightImageInput');
+        imagePreview = document.getElementById('imagePreview');
+        
+        let draggedItem = null; // 正在被拖曳的原始項目
+        let useTrack = false;
+
+        // --- 常數 ---
+        const DIAL_RADIUS = 95;
+        const CENTER_X = 100;
+        const CENTER_Y = 100;
+        const MAX_WEIGHT_GRAMS = 3000;
+        const TOTAL_DEGREES = 360;
+        const DEGREES_PER_GRAM = TOTAL_DEGREES / MAX_WEIGHT_GRAMS; // 360 / 3000 = 0.12 度/公克
+
+        // --- 狀態變數 ---
+        let currentGrams = 0;
+        let isChallengeMode = false;
+        let challengeQuestions = [];
+        let currentQuestionIndex = 0;
+        let score = 0;
+        let audioContext;
+        let useSound = true;
+        let challengeTargetGrams = 0; // 挑戰模式的目標重量
+        let currentAnimationInterval = null; // 用於儲存動畫的 interval
+        let imagePreviewUrl = null; // 儲存圖片預覽的 URL
+
+        // --- 音效生成器 ---
+        function createAudioContext() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+
+        function playSound(type) {
+            if (!useSound || !audioContext) return;
+
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+
+            let frequency, duration, volume;
+
+            switch (type) {
+                case 'correct':
+                    frequency = 880; duration = 0.1; volume = 0.2;
+                    break;
+                case 'wrong':
+                    frequency = 220; duration = 0.2; volume = 0.2;
+                    break;
+                case 'click': // 用於放置砝碼
+                    frequency = 660; duration = 0.05; volume = 0.1;
+                    break;
+                case 'success_jingle':
+                    playSuccessJingle();
+                    return;
+                default:
+                    return;
+            }
+
+            oscillator.type = 'sine';
+            oscillator.frequency.value = frequency;
+            gainNode.gain.setValueAtTime(volume, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.00001, audioContext.currentTime + duration); // Fade out
+
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + duration);
+        }
+
+        function playSuccessJingle() {
+            if (!useSound || !audioContext) return;
+            const notes = [
+                { freq: 523.25, dur: 0.1 }, { freq: 659.25, dur: 0.1 },
+                { freq: 783.99, dur: 0.15 },{ freq: 1046.50, dur: 0.2 },
+            ];
+            let startTime = audioContext.currentTime;
+            notes.forEach(note => {
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                oscillator.type = 'triangle';
+                oscillator.frequency.value = note.freq;
+                gainNode.gain.setValueAtTime(0.3, startTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.00001, startTime + note.dur);
+                oscillator.start(startTime);
+                oscillator.stop(startTime + note.dur);
+                startTime += note.dur + 0.02;
+            });
+        }
+
+        // --- 彩花效果 ---
+        function launchConfetti() {
+            for (let i = 0; i < 50; i++) {
+                const confetti = document.createElement('div');
+                confetti.classList.add('confetti');
+                confetti.style.left = Math.random() * 100 + '%';
+                confetti.style.backgroundColor = `hsl(${Math.random() * 360}, 100%, 50%)`;
+                confetti.style.animationDuration = (Math.random() * 2 + 3) + 's';
+                confetti.style.animationDelay = (Math.random() * 0.5) + 's';
+                confetti.style.transform = `translateX(${Math.random() * 200 - 100}px) translateY(${Math.random() * -100}px) rotateZ(${Math.random() * 360}deg)`;
+                confettiContainer.appendChild(confetti);
+                confetti.addEventListener('animationend', () => confetti.remove());
+            }
+        }
+
+        // --- 秤面繪製 ---
+        function drawScaleMarks() {
+            const dialMarks = document.getElementById('dialMarks');
+            dialMarks.innerHTML = '';
+            const smallMarkLength = 4;
+            const mediumMarkLength = 7;
+            const largeMarkLength = 10;
+            const extraLargeMarkLength = 31.35; // 0.33 * 95
+            const markStrokeWidth = 0.5;
+            const totalMarks = 300; // 360 / 1.2 = 300
+
+            for (let i = 0; i < totalMarks; i++) {
+                const angle = i * 1.2;
+                let length = smallMarkLength;
+                let stroke = '#999';
+
+                if (i % 50 === 0) { // 每 60 度 (50 * 1.2)
+                    length = extraLargeMarkLength;
+                    stroke = 'red';
+                } else if (i % 10 === 0) { // 每 12 度 (10 * 1.2)
+                    length = largeMarkLength;
+                    stroke = '#333';
+                } else if (i % 5 === 0) { // 每 6 度 (5 * 1.2)
+                    length = mediumMarkLength;
+                    stroke = '#666';
+                }
+
+                const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                line.setAttribute('x1', CENTER_X);
+                line.setAttribute('y1', CENTER_Y - DIAL_RADIUS);
+                line.setAttribute('x2', CENTER_X);
+                line.setAttribute('y2', CENTER_Y - DIAL_RADIUS + length);
+                line.setAttribute('stroke', stroke);
+                line.setAttribute('stroke-width', markStrokeWidth);
+                line.setAttribute('class', 'dial-mark');
+                line.setAttribute('transform', `rotate(${angle} ${CENTER_X} ${CENTER_Y})`);
+                dialMarks.appendChild(line);
+            }
+        }
+        
+        // --- 軌跡繪製 ---
+        function polarToCartesian(centerX, centerY, radius, angleInDegrees) {
+            var angleInRadians = (angleInDegrees - 90) * Math.PI / 180.0;
+            return {
+                x: centerX + (radius * Math.cos(angleInRadians)),
+                y: centerY + (radius * Math.sin(angleInRadians))
+            };
+        }
+
+        function drawTrack(degrees) {
+            if (!useTrack || degrees <= 0) {
+                weightTrack.setAttribute("d", ""); // 隱藏軌跡
+                return;
+            }
+            
+            // 確保角度不超過 359.9 (避免SVG繪製 360 度扇形的問題)
+            const angle = Math.min(degrees, 359.99); 
+            
+            const start = polarToCartesian(CENTER_X, CENTER_Y, DIAL_RADIUS, 0);
+            const end = polarToCartesian(CENTER_X, CENTER_Y, DIAL_RADIUS, angle);
+            const largeArcFlag = angle > 180 ? "1" : "0";
+
+            const d = [
+                "M", CENTER_X, CENTER_Y, // L (line to) start
+                "L", start.x, start.y,
+                "A", DIAL_RADIUS, DIAL_RADIUS, 0, largeArcFlag, 1, end.x, end.y,
+                "Z" // close path
+            ].join(" ");
+
+            weightTrack.setAttribute("d", d);
+        }
+
+        // --- 指針與顯示更新 ---
+        function updateNeedleAndDisplay(grams) {
+            currentGrams = grams;
+            const degrees = (grams * DEGREES_PER_GRAM) % 360;
+            
+            // 1. 更新指針
+            weightNeedle.setAttribute('transform', `rotate(${degrees} ${CENTER_X} ${CENTER_Y})`);
+
+            // 2. 更新軌跡
+            drawTrack(degrees);
+
+            // 3. 更新數字顯示 (僅在非挑戰模式下)
+            if (!isChallengeMode) {
+                const kg = Math.floor(grams / 1000);
+                const g = grams % 1000;
+                digitalKgDisplay.textContent = `${kg} 公斤`;
+                digitalGramDisplay.textContent = `${g} 公克`;
+            }
+        }
+        
+        // --- 拖曳功能 (砝碼模式) ---
+        
+        function recalculateTotalWeight() {
+            let totalWeight = 0;
+            const weightsOnScale = onScaleArea.querySelectorAll('.draggable-weight');
+            weightsOnScale.forEach(weight => {
+                totalWeight += parseInt(weight.dataset.weight || '0', 10);
+            });
+            updateNeedleAndDisplay(totalWeight);
+        }
+
+        function startDrag(e) {
+            // 挑戰模式中禁止拖曳
+            if (isChallengeMode) {
+                e.preventDefault();
+                return;
+            }
+            draggedItem = e.target.closest('.draggable-weight');
+            if (!draggedItem) return;
+            
+            // 立即建立副本
+            const clone = draggedItem.cloneNode(true);
+            clone.style.position = 'absolute';
+            clone.style.zIndex = '1000';
+            document.body.appendChild(clone);
+            clone.classList.add('dragging');
+            
+            // 隱藏原始項目 (如果是從砝碼區拖曳)
+            if (weightsHome.contains(draggedItem)) {
+                draggedItem.style.visibility = 'hidden';
+            } else if (onScaleArea.contains(draggedItem)) {
+                // 如果是從秤盤上拖曳，則從秤盤上移除
+                draggedItem.remove();
+            }
+
+            // 將 clone 設為新的 draggedItem，這樣 endDrag 才能正確處理
+            draggedItem = clone;
+            
+            moveDrag(e); // 立即將 clone 移到滑鼠位置
+            
+            document.addEventListener('mousemove', moveDrag);
+            document.addEventListener('mouseup', endDrag);
+            document.addEventListener('touchmove', moveDrag, { passive: false });
+            document.addEventListener('touchend', endDrag);
+            e.preventDefault();
+        }
+
+        function moveDrag(e) {
+            if (!draggedItem) return;
+            e.preventDefault();
+            
+            const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+            const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+
+            draggedItem.style.left = `${clientX - draggedItem.offsetWidth / 2}px`;
+            draggedItem.style.top = `${clientY - draggedItem.offsetHeight / 2}px`;
+        }
+
+        function endDrag(e) {
+            if (!draggedItem) return;
+
+            // --- 修正開始 ---
+            // 1. 暫時隱藏被拖曳的項目
+            draggedItem.style.display = 'none';
+
+            const clientX = e.clientX || (e.changedTouches && e.changedTouches[0].clientX);
+            const clientY = e.clientY || (e.changedTouches && e.changedTouches[0].clientY);
+
+            // 2. 獲取放下點的元素 (現在會抓到下方的容器)
+            const dropTarget = document.elementFromPoint(clientX, clientY);
+            
+            // 3. 恢復顯示被拖曳的項目 (CSS中 .draggable-weight 使用 display: flex)
+            draggedItem.style.display = 'flex'; 
+            // --- 修正結束 ---
+            
+            // 檢查是否放置在 onScaleArea
+            if (onScaleArea.contains(dropTarget) || dropTarget === onScaleArea) {
+                draggedItem.style.position = 'static'; // 移除 absolute 定位
+                draggedItem.classList.add('on-scale'); // 縮小
+                onScaleArea.appendChild(draggedItem);
+                playSound('click');
+            } else {
+                // 放置在無效區域 (移除副本)
+                draggedItem.remove();
+            }
+            
+            // 顯示砝碼區的原始項目
+            const originalWeight = weightsHome.querySelector(`[data-weight="${draggedItem.dataset.weight}"]`);
+            if (originalWeight) {
+                originalWeight.style.visibility = 'visible';
+            }
+
+            // 清理
+            draggedItem.classList.remove('dragging');
+            draggedItem = null;
+            document.removeEventListener('mousemove', moveDrag);
+            document.removeEventListener('mouseup', endDrag);
+            document.removeEventListener('touchmove', moveDrag);
+            document.removeEventListener('touchend', endDrag);
+
+            recalculateTotalWeight(); // 重新計算總重量
+        }
+
+        // --- 挑戰模式 (讀取重量) ---
+
+        function generateChallengeQuestions(num) {
+            const questions = [];
+            const maxMultiple = MAX_WEIGHT_GRAMS / 50; // 3000 / 50 = 60
+            for (let i = 0; i < num; i++) {
+                // 產生 1 到 60 之間的隨機整數
+                const randomMultiple = Math.floor(Math.random() * maxMultiple) + 1;
+                // 將該整數乘以 50，確保題目是 50 的倍數 (50g, 100g, ... 3000g)
+                const grams = randomMultiple * 50; 
+                questions.push(grams);
+            }
+            return questions;
+        }
+
+        function startChallenge() {
+            isChallengeMode = true;
+            score = 0;
+            currentQuestionIndex = 0;
+            challengeQuestions = generateChallengeQuestions(3);
+            
+            appContainer.classList.add('challenge-mode-active');
+            challengeBtn.classList.add('hidden');
+            // submitAnswerBtn.classList.remove('hidden'); // 移到動畫結束後
+            
+            displayNextQuestion();
+        }
+
+        function displayNextQuestion() {
+            if (currentQuestionIndex < challengeQuestions.length) {
+                challengeTargetGrams = challengeQuestions[currentQuestionIndex];
+                
+                // 步驟 1: 先讓指針動畫歸零 (因為 transition 已移除，這是瞬時的)
+                updateNeedleAndDisplay(0); 
+
+                // 步驟 2: 幾乎立即開始 "計數" 動畫
+                setTimeout(() => {
+                    
+                    // --- 新的逐格動畫邏輯 ---
+                    let currentAnimGrams = 0;
+                    const finalGrams = challengeTargetGrams;
+                    const increment = 10; // 每次增加 10g
+                    const intervalTime = 5; // 每 5 毫秒增加一次 (越小越快)
+
+                    // 如果有上一個動畫在跑，先清除它
+                    if (currentAnimationInterval) {
+                        clearInterval(currentAnimationInterval);
+                    }
+
+                    currentAnimationInterval = setInterval(() => {
+                        currentAnimGrams += increment;
+
+                        if (currentAnimGrams >= finalGrams) {
+                            // 動畫結束
+                            currentAnimGrams = finalGrams;
+                            clearInterval(currentAnimationInterval);
+                            currentAnimationInterval = null;
+                            updateNeedleAndDisplay(finalGrams); // 設定最終準確位置
+                            
+                            // 動畫結束後，才清空使用者輸入框
+                            challengeKgInput.value = '';
+                            challengeGInput.value = '';
+                            feedbackMessage.classList.add('hidden');
+
+                            // 顯示提交按鈕，讓使用者可以回答
+                            submitAnswerBtn.classList.remove('hidden');
+                        } else {
+                            // 動畫過程中
+                            updateNeedleAndDisplay(currentAnimGrams); // 更新指針位置
+                        }
+                    }, intervalTime);
+                    // --- 逐格動畫結束 ---
+                    
+                }, 10); // 歸零後幾乎立即 (10ms) 開始
+
+            } else {
+                endChallenge();
+            }
+        }
+
+        function submitAnswer() {
+            const targetGrams = challengeTargetGrams;
+            
+            // 讀取使用者輸入並轉換為公克
+            const userKg = parseInt(challengeKgInput.value || '0', 10);
+            const userG = parseInt(challengeGInput.value || '0', 10);
+            const userTotalGrams = (userKg * 1000) + userG;
+
+            // 判斷是否答對
+            if (userTotalGrams === targetGrams) {
+                score++;
+                feedbackMessage.textContent = '答對了！';
+                feedbackMessage.className = 'mt-4 text-center text-2xl font-bold text-green-600';
+                playSound('correct');
+                currentQuestionIndex++;
+
+                // 答對了，先隱藏提交按鈕，防止連按
+                submitAnswerBtn.classList.add('hidden');
+                
+                setTimeout(displayNextQuestion, 1500); // 延遲 1.5 秒後顯示下一題
+            } else {
+                feedbackMessage.textContent = '再試試看！';
+                feedbackMessage.className = 'mt-4 text-center text-2xl font-bold text-red-600';
+                playSound('wrong');
+
+                if (feedbackMessage.dataset.attempt === '1') {
+                    const correctKg = Math.floor(targetGrams / 1000);
+                    const correctG = targetGrams % 1000;
+                    feedbackMessage.textContent = `差一點點！答案是 ${correctKg} 公斤 ${correctG} 公克。`;
+                    
+                    currentQuestionIndex++;
+
+                    // 顯示答案了，先隱藏提交按鈕
+                    submitAnswerBtn.classList.add('hidden');
+
+                    setTimeout(displayNextQuestion, 2500); // 延遲 2.5 秒後顯示下一題
+                    feedbackMessage.dataset.attempt = '0';
+                } else {
+                    feedbackMessage.dataset.attempt = '1';
+                }
+            }
+            feedbackMessage.classList.remove('hidden');
+        }
+
+        function endChallenge() {
+            isChallengeMode = false;
+            
+            appContainer.classList.remove('challenge-mode-active');
+            challengeBtn.classList.remove('hidden');
+            submitAnswerBtn.classList.add('hidden');
+            
+            // 停止任何正在進行的動畫
+            if (currentAnimationInterval) {
+                clearInterval(currentAnimationInterval);
+                currentAnimationInterval = null;
+            }
+
+            finalScore.textContent = score;
+            totalQuestions.textContent = challengeQuestions.length;
+            resultModal.classList.remove('app-modal-hidden');
+            resultModal.classList.add('flex'); // 顯示
+
+            if (score === challengeQuestions.length) {
+                resultTitle.textContent = '恭喜！全部答對！🎉';
+                playSound('success_jingle');
+                launchConfetti();
+            } else {
+                resultTitle.textContent = '挑戰完成！';
+            }
+            
+            // 挑戰結束，指針歸零並恢復顯示
+            resetScaleToInitialState(false); // 只重置重量，不重置UI
+        }
+
+        // --- 重置功能 ---
+        function resetScaleToInitialState(resetUI = true) {
+            // 1. 清空秤盤
+            onScaleArea.innerHTML = '';
+            
+            // 2. 重新計算重量 (會歸零)
+            recalculateTotalWeight(); // 這會呼叫 updateNeedleAndDisplay(0)
+            
+            // 3. 重置挑戰模式 (如果需要)
+            if (resetUI) {
+                isChallengeMode = false;
+                appContainer.classList.remove('challenge-mode-active');
+                challengeBtn.classList.remove('hidden');
+                submitAnswerBtn.classList.add('hidden');
+                feedbackMessage.classList.add('hidden');
+                resultModal.classList.add('app-modal-hidden');
+                resultModal.classList.remove('flex'); // 隱藏
+                
+                // 停止任何正在進行的動畫
+                if (currentAnimationInterval) {
+                    clearInterval(currentAnimationInterval);
+                    currentAnimationInterval = null;
+                }
+            }
+            // 確保數字顯示在重置時是正確的 (0)
+            digitalKgDisplay.textContent = `0 公斤`;
+            digitalGramDisplay.textContent = `0 公克`;
+        }
+        
+        // --- 自製砝碼功能 ---
+        
+        // 顯示彈窗
+        addWeightBtn.addEventListener('click', () => {
+            // 清空舊資料
+            customWeightName.value = '';
+            customWeightGrams.value = '';
+            customWeightImageInput.value = null;
+            imagePreview.style.backgroundImage = 'none';
+            imagePreviewUrl = null;
+            
+            customWeightModal.classList.remove('app-modal-hidden');
+            customWeightModal.classList.add('flex'); // 顯示
+        });
+
+        // 關閉彈窗
+        closeModalBtn.addEventListener('click', () => {
+            customWeightModal.classList.add('app-modal-hidden');
+            customWeightModal.classList.remove('flex'); // 隱藏
+        });
+
+        // 圖片預覽
+        customWeightImageInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    imagePreviewUrl = event.target.result;
+                    imagePreview.style.backgroundImage = `url(${imagePreviewUrl})`;
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // 儲存砝碼
+        saveWeightBtn.addEventListener('click', () => {
+            const name = customWeightName.value || '物品';
+            const grams = parseInt(customWeightGrams.value || '0', 10);
+
+            if (grams <= 0) {
+                // 改用 DOM 內嵌提示，避免 alert
+                feedbackMessage.textContent = '請輸入大於 0 的重量';
+                feedbackMessage.className = 'mt-4 text-center text-lg font-bold text-red-600';
+                feedbackMessage.classList.remove('hidden');
+                setTimeout(() => feedbackMessage.classList.add('hidden'), 2000);
+                return;
+            }
+            if (!imagePreviewUrl) {
+                // 改用 DOM 內嵌提示
+                feedbackMessage.textContent = '請上傳一張圖片';
+                feedbackMessage.className = 'mt-4 text-center text-lg font-bold text-red-600';
+                feedbackMessage.classList.remove('hidden');
+                setTimeout(() => feedbackMessage.classList.add('hidden'), 2000);
+                return;
+            }
+
+            // 建立新的砝碼 div
+            const newWeightDiv = document.createElement('div');
+            newWeightDiv.classList.add('draggable-weight');
+            newWeightDiv.dataset.weight = grams;
+            newWeightDiv.title = `${name} (${grams}g)`;
+            newWeightDiv.style.backgroundImage = `url(${imagePreviewUrl})`;
+            
+            // 顯示文字
+            const shortName = name.length > 5 ? name.substring(0, 4) + '...' : name;
+            newWeightDiv.textContent = `${shortName} ${grams}g`;
+            newWeightDiv.style.fontSize = '0.6rem'; // 自製砝碼文字小一點
+            newWeightDiv.style.textAlign = 'center';
+
+            // 加入到砝碼區
+            weightsHome.appendChild(newWeightDiv);
+
+            // 為新砝碼加上拖曳事件 (不需要，因為已使用事件委派)
+            // newWeightDiv.addEventListener('mousedown', startDrag);
+            // newWeightDiv.addEventListener('touchstart', startDrag, { passive: false });
+
+            // 關閉彈窗
+            customWeightModal.classList.add('app-modal-hidden');
+            customWeightModal.classList.remove('flex'); // 隱藏
+        });
+
+
+        // --- 事件監聽器 ---
+        
+        // 砝碼區拖曳 (使用 mousedown 啟動)
+        // 使用事件委派，這樣新增的自製砝碼也能拖曳
+        weightsHome.addEventListener('mousedown', startDrag);
+        weightsHome.addEventListener('touchstart', startDrag, { passive: false });
+        
+        // 秤盤區拖曳 (點擊已在秤盤上的砝碼)
+        onScaleArea.addEventListener('mousedown', startDrag);
+        onScaleArea.addEventListener('touchstart', startDrag, { passive: false });
+
+        // 按鈕
+        challengeBtn.addEventListener('click', startChallenge);
+        submitAnswerBtn.addEventListener('click', submitAnswer);
+        resetBtn.addEventListener('click', () => resetScaleToInitialState(true));
+
+        // 聲音開關
+        soundToggle.addEventListener('change', (e) => {
+            useSound = e.target.checked;
+            if (useSound) {
+                createAudioContext();
+            }
+        });
+        
+        // 軌跡開關
+        trackToggle.addEventListener('change', (e) => {
+            useTrack = e.target.checked;
+            updateNeedleAndDisplay(currentGrams); // 立即更新軌跡顯示
+        });
+
+        // 彈窗
+        helpBtn.addEventListener('click', () => {
+            helpModal.classList.remove('app-modal-hidden');
+            helpModal.classList.add('flex'); // 顯示
+        });
+        closeHelpModalBtn.addEventListener('click', () => {
+            helpModal.classList.add('app-modal-hidden');
+            helpModal.classList.remove('flex'); // 隱藏
+        });
+        closeResultModalBtn.addEventListener('click', () => {
+            resultModal.classList.add('app-modal-hidden');
+            resultModal.classList.remove('flex'); // 隱藏
+            confettiContainer.innerHTML = '';
+            resetScaleToInitialState(true); // 關閉視窗後重置
+        });
+
+        // --- 初始化 ---
+        drawScaleMarks(); // 繪製秤面刻度
+        updateNeedleAndDisplay(0); // 確保指針在 0
+        // createAudioContext(); // 改為使用者第一次互動時才創建
+
+        // 第一次互動時才創建 AudioContext
+        document.body.addEventListener('click', createAudioContext, { once: true });
+        document.body.addEventListener('touchstart', createAudioContext, { once: true });
+
+
+    }); // --- DOMContentLoaded 結束 ---
+    </script>
+</body>
+</html>
+
