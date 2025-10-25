@@ -6,6 +6,11 @@
     <title>互動秤面學習板</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- PWA 新增 -->
+    <link rel="manifest" href="./manifest.json">
+    <meta name="theme-color" content="#3b82f6">
+    
     <style>
         body { font-family: 'Inter', sans-serif; }
         /* .dial-mark { transform-origin: center; } <-- 已移除此行 */
@@ -179,7 +184,7 @@
         <!-- 右側：控制面板 -->
         <div class="w-full lg:w-2/5 p-6 bg-white flex flex-col justify-between">
             <div>
-                <h1 class="text-3xl font-bold mb-4 text-center lg:text-left">3公斤秤面學習板</h1>
+                <h1 class="text-3xl font-bold mb-4 text-center lg:text-left">3kg秤面學習板</h1>
 
                 <!-- 數字顯示 (已加上 ID) -->
                 <div id="digital-display-container" class="mb-6 bg-blue-100 p-4 rounded-lg flex items-center justify-center flex-wrap gap-x-4">
@@ -860,6 +865,7 @@
                 challengeBtn.classList.remove('hidden');
                 submitAnswerBtn.classList.add('hidden');
                 feedbackMessage.classList.add('hidden');
+                
                 resultModal.classList.add('app-modal-hidden');
                 resultModal.classList.remove('flex'); // 隱藏
                 
@@ -946,10 +952,6 @@
             // 加入到砝碼區
             weightsHome.appendChild(newWeightDiv);
 
-            // 為新砝碼加上拖曳事件 (不需要，因為已使用事件委派)
-            // newWeightDiv.addEventListener('mousedown', startDrag);
-            // newWeightDiv.addEventListener('touchstart', startDrag, { passive: false });
-
             // 關閉彈窗
             customWeightModal.classList.add('app-modal-hidden');
             customWeightModal.classList.remove('flex'); // 隱藏
@@ -1010,6 +1012,21 @@
         // 第一次互動時才創建 AudioContext
         document.body.addEventListener('click', createAudioContext, { once: true });
         document.body.addEventListener('touchstart', createAudioContext, { once: true });
+
+
+        // --- PWA Service Worker 註冊 (新增) ---
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(registration => {
+                        console.log('ServiceWorker 註冊成功: ', registration);
+                    })
+                    .catch(error => {
+                        console.log('ServiceWorker 註冊失敗: ', error);
+                    });
+            });
+        }
+        // --- PWA 註冊結束 ---
 
 
     }); // --- DOMContentLoaded 結束 ---
